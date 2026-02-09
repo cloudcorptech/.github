@@ -60,7 +60,12 @@ on:
         required: false
         type: string
         default: "."
-        description: "Docker build context directory"
+        description: "Docker build context for app and web images"
+      docker_context_extra:
+        required: false
+        type: string
+        default: ""
+        description: "Docker build context for extra image (defaults to docker_context if empty)"
       pre_cache_commands:
         required: false
         type: string
@@ -128,7 +133,7 @@ jobs:
         if: ${{ inputs.extra_image != '' }}
         uses: docker/build-push-action@v6
         with:
-          context: ${{ inputs.docker_context }}
+          context: ${{ inputs.docker_context_extra != '' && inputs.docker_context_extra || inputs.docker_context }}
           file: ${{ inputs.dockerfile_extra }}
           push: ${{ inputs.deploy }}
           tags: |
