@@ -1,0 +1,136 @@
+name: Build & Deploy Laravel
+
+on:
+  workflow_call:
+    inputs:
+      app_image:
+        required: true
+        type: string
+        description: "ECR image name for PHP app (e.g. creditlegalproviders/app)"
+      web_image:
+        required: true
+        type: string
+        description: "ECR image name for nginx web (e.g. creditlegalproviders/web)"
+      dockerfile_app:
+        required: false
+        type: string
+        default: "docker/prod/Dockerfile.app"
+      dockerfile_web:
+        required: false
+        type: string
+        default: "docker/prod/Dockerfile.web"
+      deploy_path:
+        required: true
+        type: string
+        description: "Path on EC2 (e.g. /home/ec2-user/creditlegalproviders)"
+      ec2_user:
+        required: false
+        type: string
+        default: "ec2-user"
+      compose_file:
+        required: false
+        type: string
+        default: "docker-compose.prod.yml"
+      run_migrations:
+        required: false
+        type: boolean
+        default: true
+      app_service:
+        required: false
+        type: string
+        default: "app"
+        description: "Docker compose service name for the PHP container"
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      EC2_HOST:
+        required: true
+      EC2_SSH_KEY:
+        required: true
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: 890890990369.dkr.ecr.us-east-1.amazonaws.com
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build & push app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ inputs.dockerfile_app }}
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ inputs.app_image }}:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ inputs.app_image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build & push web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ inputs.dockerfile_web }}
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ inputs.web_image }}:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ inputs.web_image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ inputs.ec2_user }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            cd ${{ inputs.deploy_path }}
+
+            git pull origin main
+
+            aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 890890990369.dkr.ecr.us-east-1.amazonaws.com
+
+            docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.app_image }}:latest
+            docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.web_image }}:latest
+
+            docker-compose -f ${{ inputs.compose_file }} up -d --force-recreate
+
+            if [ "${{ inputs.run_migrations }}" = "true" ]; then
+              docker-compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan migrate --force --no-interaction
+            fi
+
+            docker-compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan config:cache
+            docker-compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan route:cache
+            docker-compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan view:cache
+
+            docker image prune -f
+            sudo yum clean all 2>/dev/null
+            sudo rm -rf /var/cache/yum 2>/dev/null
+
+            echo "Deploy complete"
