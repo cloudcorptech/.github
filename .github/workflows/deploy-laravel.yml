@@ -56,6 +56,16 @@ on:
         type: boolean
         default: true
         description: "Whether to deploy after building (set false for PR builds)"
+      docker_context:
+        required: false
+        type: string
+        default: "."
+        description: "Docker build context directory"
+      pre_cache_commands:
+        required: false
+        type: string
+        default: ""
+        description: "Commands to run after compose up but before migrations (e.g. composer install, npm build)"
     secrets:
       AWS_ACCESS_KEY_ID:
         required: true
@@ -92,7 +102,7 @@ jobs:
       - name: Build & push app image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ inputs.docker_context }}
           file: ${{ inputs.dockerfile_app }}
           push: ${{ inputs.deploy }}
           tags: |
@@ -105,7 +115,7 @@ jobs:
         if: ${{ inputs.web_image != '' }}
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ inputs.docker_context }}
           file: ${{ inputs.dockerfile_web }}
           push: ${{ inputs.deploy }}
           tags: |
@@ -118,7 +128,7 @@ jobs:
         if: ${{ inputs.extra_image != '' }}
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ inputs.docker_context }}
           file: ${{ inputs.dockerfile_extra }}
           push: ${{ inputs.deploy }}
           tags: |
@@ -152,6 +162,11 @@ jobs:
             [ -n "${{ inputs.extra_image }}" ] && docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.extra_image }}:latest
 
             docker-compose -f ${{ inputs.compose_file }} up -d --force-recreate
+
+            # Run pre-cache commands (e.g. composer install, npm build)
+            if [ -n "${{ inputs.pre_cache_commands }}" ]; then
+              ${{ inputs.pre_cache_commands }}
+            fi
 
             if [ "${{ inputs.run_migrations }}" = "true" ]; then
               docker-compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan migrate --force --no-interaction
