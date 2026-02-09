@@ -8,9 +8,15 @@ on:
         type: string
         description: "ECR image name for PHP app (e.g. creditlegalproviders/app)"
       web_image:
-        required: true
+        required: false
         type: string
+        default: ""
         description: "ECR image name for nginx web (e.g. creditlegalproviders/web)"
+      extra_image:
+        required: false
+        type: string
+        default: ""
+        description: "Additional ECR image (e.g. cloudvoice/websocket)"
       dockerfile_app:
         required: false
         type: string
@@ -19,6 +25,11 @@ on:
         required: false
         type: string
         default: "docker/prod/Dockerfile.web"
+      dockerfile_extra:
+        required: false
+        type: string
+        default: ""
+        description: "Dockerfile for extra image (e.g. docker/websocket/Dockerfile)"
       deploy_path:
         required: true
         type: string
@@ -40,6 +51,11 @@ on:
         type: string
         default: "app"
         description: "Docker compose service name for the PHP container"
+      deploy:
+        required: false
+        type: boolean
+        default: true
+        description: "Whether to deploy after building (set false for PR builds)"
     secrets:
       AWS_ACCESS_KEY_ID:
         required: true
@@ -78,7 +94,7 @@ jobs:
         with:
           context: .
           file: ${{ inputs.dockerfile_app }}
-          push: true
+          push: ${{ inputs.deploy }}
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ inputs.app_image }}:${{ github.sha }}
             ${{ env.ECR_REGISTRY }}/${{ inputs.app_image }}:latest
@@ -86,19 +102,34 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build & push web image
+        if: ${{ inputs.web_image != '' }}
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ inputs.dockerfile_web }}
-          push: true
+          push: ${{ inputs.deploy }}
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ inputs.web_image }}:${{ github.sha }}
             ${{ env.ECR_REGISTRY }}/${{ inputs.web_image }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build & push extra image
+        if: ${{ inputs.extra_image != '' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ inputs.dockerfile_extra }}
+          push: ${{ inputs.deploy }}
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ inputs.extra_image }}:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ inputs.extra_image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   deploy:
     needs: build
+    if: ${{ inputs.deploy }}
     runs-on: ubuntu-latest
 
     steps:
@@ -117,7 +148,8 @@ jobs:
             aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 890890990369.dkr.ecr.us-east-1.amazonaws.com
 
             docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.app_image }}:latest
-            docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.web_image }}:latest
+            [ -n "${{ inputs.web_image }}" ] && docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.web_image }}:latest
+            [ -n "${{ inputs.extra_image }}" ] && docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.extra_image }}:latest
 
             docker-compose -f ${{ inputs.compose_file }} up -d --force-recreate
 
