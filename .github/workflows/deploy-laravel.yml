@@ -176,9 +176,7 @@ jobs:
             sleep 5
 
             # Run pre-cache commands if specified
-            if [ -n "${{ inputs.pre_cache_commands }}" ]; then
-              ${{ inputs.pre_cache_commands }}
-            fi
+            ${{ inputs.pre_cache_commands }}
 
             # Run migrations
             if [ "${{ inputs.run_migrations }}" = "true" ]; then
