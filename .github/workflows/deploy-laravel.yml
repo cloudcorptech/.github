@@ -156,33 +156,44 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           command_timeout: 10m
           script: |
+            set -e
             cd ${{ inputs.deploy_path }}
 
-            git pull origin main
+            # Sync repo (compose files, nginx config, etc.)
+            git fetch origin main
+            git reset --hard origin/main
 
+            # Pull images from ECR
             aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 890890990369.dkr.ecr.us-east-1.amazonaws.com
-
             docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.app_image }}:latest
-            [ -n "${{ inputs.web_image }}" ] && docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.web_image }}:latest
-            [ -n "${{ inputs.extra_image }}" ] && docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.extra_image }}:latest
+            [ -n "${{ inputs.web_image }}" ] && docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.web_image }}:latest || true
+            [ -n "${{ inputs.extra_image }}" ] && docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.extra_image }}:latest || true
 
+            # Start containers
             docker-compose -f ${{ inputs.compose_file }} up -d --force-recreate
 
-            # Run pre-cache commands (e.g. composer install, npm build)
+            # Wait for containers to be healthy
+            sleep 5
+
+            # Run pre-cache commands if specified
             if [ -n "${{ inputs.pre_cache_commands }}" ]; then
               ${{ inputs.pre_cache_commands }}
             fi
 
+            # Run migrations
             if [ "${{ inputs.run_migrations }}" = "true" ]; then
               docker-compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan migrate --force --no-interaction
             fi
 
+            # Cache configuration
             docker-compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan config:cache
             docker-compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan route:cache
             docker-compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan view:cache
 
+            # Clean up disk
             docker image prune -f
-            sudo yum clean all 2>/dev/null
-            sudo rm -rf /var/cache/yum 2>/dev/null
+            docker builder prune -f --filter "until=72h" 2>/dev/null || true
+            sudo yum clean all 2>/dev/null || true
+            sudo rm -rf /var/cache/yum 2>/dev/null || true
 
             echo "Deploy complete"
