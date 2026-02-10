@@ -76,6 +76,16 @@ on:
         type: string
         default: "main"
         description: "Git ref to deploy on EC2 (branch or tag)"
+      ssm_env_parameter:
+        required: false
+        type: string
+        default: ""
+        description: "SSM Parameter Store path for .env file (e.g. /cloudvoice/prod/env). If set, .env is pulled from SSM before docker-compose up."
+      env_file_path:
+        required: false
+        type: string
+        default: "src/.env"
+        description: "Path to .env file relative to deploy_path"
     secrets:
       AWS_ACCESS_KEY_ID:
         required: true
@@ -203,6 +213,18 @@ jobs:
             git fetch origin --tags --force
             git checkout ${{ inputs.git_ref }} 2>/dev/null || git checkout origin/${{ inputs.git_ref }}
             git reset --hard HEAD
+
+            # Pull .env from SSM Parameter Store (if configured)
+            if [ -n "${{ inputs.ssm_env_parameter }}" ]; then
+              echo "Pulling .env from SSM: ${{ inputs.ssm_env_parameter }}"
+              aws ssm get-parameter \
+                --name "${{ inputs.ssm_env_parameter }}" \
+                --with-decryption \
+                --query 'Parameter.Value' \
+                --output text \
+                --region us-east-1 > ${{ inputs.env_file_path }}
+              echo ".env updated from SSM ($(wc -l < ${{ inputs.env_file_path }}) lines)"
+            fi
 
             # Pull images from ECR (parallel)
             aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 890890990369.dkr.ecr.us-east-1.amazonaws.com
