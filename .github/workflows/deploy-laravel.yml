@@ -71,6 +71,11 @@ on:
         type: string
         default: ""
         description: "Commands to run after compose up but before migrations (e.g. composer install, npm build)"
+      git_ref:
+        required: false
+        type: string
+        default: "main"
+        description: "Git ref to deploy on EC2 (branch or tag)"
     secrets:
       AWS_ACCESS_KEY_ID:
         required: true
@@ -86,9 +91,9 @@ env:
   ECR_REGISTRY: 890890990369.dkr.ecr.us-east-1.amazonaws.com
 
 jobs:
-  build:
+  # ── Parallel build jobs ───────────────────────────────────────
+  build-app:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -113,11 +118,28 @@ jobs:
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ inputs.app_image }}:${{ github.sha }}
             ${{ env.ECR_REGISTRY }}/${{ inputs.app_image }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ inputs.app_image }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.app_image }}
+
+  build-web:
+    if: ${{ inputs.web_image != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
 
       - name: Build & push web image
-        if: ${{ inputs.web_image != '' }}
         uses: docker/build-push-action@v6
         with:
           context: ${{ inputs.docker_context }}
@@ -126,11 +148,28 @@ jobs:
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ inputs.web_image }}:${{ github.sha }}
             ${{ env.ECR_REGISTRY }}/${{ inputs.web_image }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ inputs.web_image }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.web_image }}
+
+  build-extra:
+    if: ${{ inputs.extra_image != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
 
       - name: Build & push extra image
-        if: ${{ inputs.extra_image != '' }}
         uses: docker/build-push-action@v6
         with:
           context: ${{ inputs.docker_context_extra != '' && inputs.docker_context_extra || inputs.docker_context }}
@@ -139,12 +178,13 @@ jobs:
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ inputs.extra_image }}:${{ github.sha }}
             ${{ env.ECR_REGISTRY }}/${{ inputs.extra_image }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ inputs.extra_image }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.extra_image }}
 
+  # ── Deploy (runs after all builds complete) ───────────────────
   deploy:
-    needs: build
-    if: ${{ inputs.deploy }}
+    needs: [build-app, build-web, build-extra]
+    if: ${{ always() && inputs.deploy && needs.build-app.result == 'success' && (needs.build-web.result == 'success' || needs.build-web.result == 'skipped') && (needs.build-extra.result == 'success' || needs.build-extra.result == 'skipped') }}
     runs-on: ubuntu-latest
 
     steps:
@@ -159,20 +199,22 @@ jobs:
             set -e
             cd ${{ inputs.deploy_path }}
 
-            # Sync repo (compose files, nginx config, etc.)
-            git fetch origin main
-            git reset --hard origin/main
+            # Sync repo
+            git fetch origin --tags
+            git checkout ${{ inputs.git_ref }} 2>/dev/null || git checkout origin/${{ inputs.git_ref }}
+            git reset --hard HEAD
 
-            # Pull images from ECR
+            # Pull images from ECR (parallel)
             aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 890890990369.dkr.ecr.us-east-1.amazonaws.com
-            docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.app_image }}:latest
-            [ -n "${{ inputs.web_image }}" ] && docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.web_image }}:latest || true
-            [ -n "${{ inputs.extra_image }}" ] && docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.extra_image }}:latest || true
+            docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.app_image }}:latest &
+            APP_PID=$!
+            [ -n "${{ inputs.web_image }}" ] && docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.web_image }}:latest &
+            [ -n "${{ inputs.extra_image }}" ] && docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.extra_image }}:latest &
+            wait $APP_PID
+            wait
 
-            # Start containers
+            # Recreate containers
             docker-compose -f ${{ inputs.compose_file }} up -d --force-recreate
-
-            # Wait for containers to be healthy
             sleep 5
 
             # Run pre-cache commands if specified
@@ -191,7 +233,5 @@ jobs:
             # Clean up disk
             docker image prune -f
             docker builder prune -f --filter "until=72h" 2>/dev/null || true
-            sudo yum clean all 2>/dev/null || true
-            sudo rm -rf /var/cache/yum 2>/dev/null || true
 
             echo "Deploy complete"
