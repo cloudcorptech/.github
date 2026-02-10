@@ -200,7 +200,7 @@ jobs:
             cd ${{ inputs.deploy_path }}
 
             # Sync repo
-            git fetch origin --tags
+            git fetch origin --tags --force
             git checkout ${{ inputs.git_ref }} 2>/dev/null || git checkout origin/${{ inputs.git_ref }}
             git reset --hard HEAD
 
