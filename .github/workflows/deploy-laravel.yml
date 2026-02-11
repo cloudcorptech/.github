@@ -86,6 +86,11 @@ on:
         type: string
         default: "src/.env"
         description: "Path to .env file relative to deploy_path"
+      submodules:
+        required: false
+        type: boolean
+        default: false
+        description: "Checkout git submodules (requires SUBMODULE_PAT secret for private repos)"
     secrets:
       AWS_ACCESS_KEY_ID:
         required: true
@@ -95,6 +100,8 @@ on:
         required: true
       EC2_SSH_KEY:
         required: true
+      SUBMODULE_PAT:
+        required: false
 
 env:
   AWS_REGION: us-east-1
@@ -106,6 +113,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.submodules && 'recursive' || '' }}
+          token: ${{ inputs.submodules && secrets.SUBMODULE_PAT || github.token }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -136,6 +146,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.submodules && 'recursive' || '' }}
+          token: ${{ inputs.submodules && secrets.SUBMODULE_PAT || github.token }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -166,6 +179,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.submodules && 'recursive' || '' }}
+          token: ${{ inputs.submodules && secrets.SUBMODULE_PAT || github.token }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -213,6 +229,7 @@ jobs:
             git fetch origin --tags --force
             git checkout ${{ inputs.git_ref }} 2>/dev/null || git checkout origin/${{ inputs.git_ref }}
             git reset --hard HEAD
+            git submodule update --init --recursive 2>/dev/null || true
 
             # Pull .env from SSM Parameter Store (if configured)
             if [ -n "${{ inputs.ssm_env_parameter }}" ]; then
