@@ -89,7 +89,7 @@ on:
       ecr_registry:
         required: false
         type: string
-        default: "${{ inputs.ecr_registry }}"
+        default: "890890990369.dkr.ecr.us-east-1.amazonaws.com"
         description: "ECR registry URL (defaults to CloudCorp account)"
       submodules:
         required: false
@@ -101,6 +101,11 @@ on:
         type: string
         default: ""
         description: "Custom deploy script to run instead of default deploy steps (e.g. ./scripts/deploy.sh). Receives IMAGE_TAG as first argument."
+      use_oidc:
+        required: false
+        type: boolean
+        default: false
+        description: "Use OIDC (role-based) auth instead of static AWS keys. Requires AWS_ROLE_ARN secret."
     secrets:
       AWS_ACCESS_KEY_ID:
         required: false
@@ -133,14 +138,14 @@ jobs:
           token: ${{ inputs.submodules && secrets.SUBMODULE_PAT || github.token }}
 
       - name: Configure AWS credentials (OIDC)
-        if: ${{ secrets.AWS_ROLE_ARN != '' }}
+        if: ${{ inputs.use_oidc }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Configure AWS credentials (static keys)
-        if: ${{ secrets.AWS_ROLE_ARN == '' }}
+        if: ${{ !inputs.use_oidc }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -177,14 +182,14 @@ jobs:
           token: ${{ inputs.submodules && secrets.SUBMODULE_PAT || github.token }}
 
       - name: Configure AWS credentials (OIDC)
-        if: ${{ secrets.AWS_ROLE_ARN != '' }}
+        if: ${{ inputs.use_oidc }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Configure AWS credentials (static keys)
-        if: ${{ secrets.AWS_ROLE_ARN == '' }}
+        if: ${{ !inputs.use_oidc }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -221,14 +226,14 @@ jobs:
           token: ${{ inputs.submodules && secrets.SUBMODULE_PAT || github.token }}
 
       - name: Configure AWS credentials (OIDC)
-        if: ${{ secrets.AWS_ROLE_ARN != '' }}
+        if: ${{ inputs.use_oidc }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Configure AWS credentials (static keys)
-        if: ${{ secrets.AWS_ROLE_ARN == '' }}
+        if: ${{ !inputs.use_oidc }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
