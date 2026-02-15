@@ -86,6 +86,11 @@ on:
         type: string
         default: "src/.env"
         description: "Path to .env file relative to deploy_path"
+      ecr_registry:
+        required: false
+        type: string
+        default: "${{ inputs.ecr_registry }}"
+        description: "ECR registry URL (defaults to CloudCorp account)"
       submodules:
         required: false
         type: boolean
@@ -112,7 +117,7 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REGISTRY: 890890990369.dkr.ecr.us-east-1.amazonaws.com
+  ECR_REGISTRY: ${{ inputs.ecr_registry }}
 
 jobs:
   # ── Parallel build jobs ───────────────────────────────────────
@@ -292,16 +297,16 @@ jobs:
             fi
 
             # Login to ECR
-            aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 890890990369.dkr.ecr.us-east-1.amazonaws.com
+            aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ inputs.ecr_registry }}
 
             # Set image tag for compose
             export IMAGE_TAG="${{ github.sha }}"
 
             # Pull images (parallel)
-            docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.app_image }}:${IMAGE_TAG} &
+            docker pull ${{ inputs.ecr_registry }}/${{ inputs.app_image }}:${IMAGE_TAG} &
             APP_PID=$!
-            [ -n "${{ inputs.web_image }}" ] && docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.web_image }}:${IMAGE_TAG} &
-            [ -n "${{ inputs.extra_image }}" ] && docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.extra_image }}:${IMAGE_TAG} &
+            [ -n "${{ inputs.web_image }}" ] && docker pull ${{ inputs.ecr_registry }}/${{ inputs.web_image }}:${IMAGE_TAG} &
+            [ -n "${{ inputs.extra_image }}" ] && docker pull ${{ inputs.ecr_registry }}/${{ inputs.extra_image }}:${IMAGE_TAG} &
             wait $APP_PID
             wait
 
