@@ -91,6 +91,11 @@ on:
         type: boolean
         default: false
         description: "Checkout git submodules (requires SUBMODULE_PAT secret for private repos)"
+      deploy_script:
+        required: false
+        type: string
+        default: ""
+        description: "Custom deploy script to run instead of default deploy steps (e.g. ./scripts/deploy.sh). Receives IMAGE_TAG as first argument."
     secrets:
       AWS_ACCESS_KEY_ID:
         required: true
@@ -243,34 +248,55 @@ jobs:
               echo ".env updated from SSM ($(wc -l < ${{ inputs.env_file_path }}) lines)"
             fi
 
-            # Pull images from ECR (parallel)
+            # Use custom deploy script if provided
+            if [ -n "${{ inputs.deploy_script }}" ]; then
+              echo "Running custom deploy script: ${{ inputs.deploy_script }}"
+              chmod +x ${{ inputs.deploy_script }}
+              ${{ inputs.deploy_script }} "${{ github.sha }}"
+              exit 0
+            fi
+
+            # Login to ECR
             aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 890890990369.dkr.ecr.us-east-1.amazonaws.com
-            docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.app_image }}:latest &
+
+            # Set image tag for compose
+            export IMAGE_TAG="${{ github.sha }}"
+
+            # Pull images (parallel)
+            docker pull ${{ env.ECR_REGISTRY }}/${{ inputs.app_image }}:${IMAGE_TAG} &
             APP_PID=$!
-            [ -n "${{ inputs.web_image }}" ] && docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.web_image }}:latest &
-            [ -n "${{ inputs.extra_image }}" ] && docker pull 890890990369.dkr.ecr.us-east-1.amazonaws.com/${{ inputs.extra_image }}:latest &
+            [ -n "${{ inputs.web_image }}" ] && docker pull ${{ env.ECR_REGISTRY }}/${{ inputs.web_image }}:${IMAGE_TAG} &
+            [ -n "${{ inputs.extra_image }}" ] && docker pull ${{ env.ECR_REGISTRY }}/${{ inputs.extra_image }}:${IMAGE_TAG} &
             wait $APP_PID
             wait
 
-            # Recreate containers
-            docker-compose -f ${{ inputs.compose_file }} up -d --force-recreate
-            sleep 5
+            # Rolling update — bring up services individually
+            docker compose -f ${{ inputs.compose_file }} up -d --no-deps ${{ inputs.app_service }}
+            sleep 3
 
             # Run pre-cache commands if specified
             ${{ inputs.pre_cache_commands }}
 
             # Run migrations
             if [ "${{ inputs.run_migrations }}" = "true" ]; then
-              docker-compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan migrate --force --no-interaction
+              docker compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan migrate --force --no-interaction
             fi
 
             # Cache configuration
-            docker-compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan config:cache
-            docker-compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan route:cache
-            docker-compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan view:cache
+            docker compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan config:cache
+            docker compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan route:cache
+            docker compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan view:cache
+            docker compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan storage:link --force 2>/dev/null || true
+
+            # Bring up remaining services
+            docker compose -f ${{ inputs.compose_file }} up -d
+
+            # Save deploy tag for rollback
+            echo "$(date +%Y-%m-%dT%H:%M:%S) ${IMAGE_TAG}" >> .deploy-tags
+            tail -10 .deploy-tags > .deploy-tags.tmp && mv .deploy-tags.tmp .deploy-tags
 
             # Clean up disk
             docker image prune -f
             docker builder prune -f --filter "until=72h" 2>/dev/null || true
 
-            echo "Deploy complete"
+            echo "Deploy complete (tag: ${IMAGE_TAG})"
