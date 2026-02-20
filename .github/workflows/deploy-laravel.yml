@@ -101,6 +101,11 @@ on:
         type: string
         default: ""
         description: "Custom deploy script to run instead of default deploy steps (e.g. ./scripts/deploy.sh). Receives IMAGE_TAG as first argument."
+      build_args_app:
+        required: false
+        type: string
+        default: ""
+        description: "Docker build-args for app image (newline-separated KEY=VALUE pairs)"
       use_oidc:
         required: false
         type: boolean
@@ -166,6 +171,7 @@ jobs:
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ inputs.app_image }}:${{ github.sha }}
             ${{ env.ECR_REGISTRY }}/${{ inputs.app_image }}:latest
+          build-args: ${{ inputs.build_args_app }}
           cache-from: type=gha,scope=${{ inputs.app_image }}
           cache-to: type=gha,mode=max,scope=${{ inputs.app_image }}
 
