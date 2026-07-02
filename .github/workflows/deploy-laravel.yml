@@ -300,7 +300,7 @@ jobs:
                 --with-decryption \
                 --query 'Parameter.Value' \
                 --output text \
-                --region us-east-1 > ${{ inputs.env_file_path }}
+                --region ${{ inputs.aws_region }} > ${{ inputs.env_file_path }}
               echo ".env updated from SSM ($(wc -l < ${{ inputs.env_file_path }}) lines)"
             fi
 
@@ -313,7 +313,7 @@ jobs:
             fi
 
             # Login to ECR
-            aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ inputs.ecr_registry }}
+            aws ecr get-login-password --region ${{ inputs.aws_region }} | docker login --username AWS --password-stdin ${{ inputs.ecr_registry }}
 
             # Set image tag for compose
             export IMAGE_TAG="${{ github.sha }}"
