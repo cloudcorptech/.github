@@ -111,6 +111,11 @@ on:
         type: boolean
         default: false
         description: "Use OIDC (role-based) auth instead of static AWS keys. Requires AWS_ROLE_ARN secret."
+      aws_region:
+        required: false
+        type: string
+        default: "us-east-1"
+        description: "AWS region for ECR and credentials (e.g. af-south-1)"
     secrets:
       AWS_ACCESS_KEY_ID:
         required: false
@@ -126,7 +131,7 @@ on:
         required: false
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ${{ inputs.aws_region || 'us-east-1' }}
   ECR_REGISTRY: ${{ inputs.ecr_registry }}
 
 jobs:
