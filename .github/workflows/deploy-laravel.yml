@@ -131,7 +131,7 @@ on:
         required: false
 
 env:
-  AWS_REGION: ${{ inputs.aws_region || 'us-east-1' }}
+  AWS_REGION: ${{ inputs.aws_region }}
   ECR_REGISTRY: ${{ inputs.ecr_registry }}
 
 jobs:
