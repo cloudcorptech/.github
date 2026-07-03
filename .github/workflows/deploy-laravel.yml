@@ -71,6 +71,11 @@ on:
         type: string
         default: ""
         description: "Commands to run after compose up but before migrations (e.g. composer install, npm build)"
+      post_migrate_commands:
+        required: false
+        type: string
+        default: ""
+        description: "Commands to run after migrations (e.g. php artisan db:seed)"
       git_ref:
         required: false
         type: string
@@ -332,6 +337,9 @@ jobs:
             if [ "${{ inputs.run_migrations }}" = "true" ]; then
               docker compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan migrate --force --no-interaction
             fi
+
+            # Run post-migrate commands if specified
+            ${{ inputs.post_migrate_commands }}
 
             # Cache configuration
             docker compose -f ${{ inputs.compose_file }} exec -T ${{ inputs.app_service }} php artisan config:cache
